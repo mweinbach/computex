@@ -2089,7 +2089,7 @@ mod handlers {
             EventMsg::ThreadRolledBack(ThreadRolledBackEvent { num_turns }),
         )
         .await;
-        // Ensure the rollback marker is visible to immediate readers (e.g., thread/resume).
+        // Ensure the rollback event message is visible immediately.
         sess.flush_rollout().await;
     }
 
