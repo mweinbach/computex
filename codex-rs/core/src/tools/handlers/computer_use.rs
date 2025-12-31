@@ -405,6 +405,9 @@ fn run_command(command: &Path, args: &[String]) -> Result<(), FunctionCallError>
 }
 
 fn capture_screenshot() -> Result<PathBuf, FunctionCallError> {
+    // Clean up old screenshots before creating a new one
+    cleanup_old_screenshots();
+
     let import = require_command("import")?;
     let id = Uuid::new_v4();
     let filename = format!("codex-screenshot-{id}.png");
@@ -430,4 +433,191 @@ fn capture_screenshot() -> Result<PathBuf, FunctionCallError> {
     }
 
     Ok(path)
+}
+
+/// Cleans up old screenshot files from the temp directory
+/// Removes codex-screenshot-*.png files older than 1 hour to prevent accumulation
+fn cleanup_old_screenshots() {
+    use std::fs;
+    use std::time::{Duration, SystemTime};
+
+    let temp_dir = env::temp_dir();
+    let max_age = Duration::from_secs(3600); // 1 hour
+
+    if let Ok(entries) = fs::read_dir(&temp_dir) {
+        let now = SystemTime::now();
+        for entry in entries.flatten() {
+            if let Ok(file_name) = entry.file_name().into_string() {
+                if file_name.starts_with("codex-screenshot-") && file_name.ends_with(".png") {
+                    // Check file age and remove if older than max_age
+                    if let Ok(metadata) = entry.metadata() {
+                        if let Ok(modified) = metadata.modified() {
+                            if let Ok(age) = now.duration_since(modified) {
+                                if age > max_age {
+                                    let _ = fs::remove_file(entry.path());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_scale_point_within_bounds() {
+        // Test point in center
+        let (x, y) = scale_point(640.0, 360.0, 1920.0, 1080.0);
+        assert_eq!(x, 960);
+        assert_eq!(y, 540);
+
+        // Test point at origin
+        let (x, y) = scale_point(0.0, 0.0, 1920.0, 1080.0);
+        assert_eq!(x, 0);
+        assert_eq!(y, 0);
+
+        // Test point at max (clamped to TARGET - 1)
+        let (x, y) = scale_point(1279.0, 719.0, 1920.0, 1080.0);
+        assert_eq!(x, 1919);
+        assert_eq!(y, 1079);
+    }
+
+    #[test]
+    fn test_scale_point_clamping() {
+        // Test values outside bounds are clamped
+        let (x, y) = scale_point(9999.0, 9999.0, 1920.0, 1080.0);
+        assert_eq!(x, 1919); // clamped to 1279 -> scales to 1919
+        assert_eq!(y, 1079); // clamped to 719 -> scales to 1079
+
+        // Test negative values are clamped to 0
+        let (x, y) = scale_point(-100.0, -100.0, 1920.0, 1080.0);
+        assert_eq!(x, 0);
+        assert_eq!(y, 0);
+    }
+
+    #[test]
+    fn test_mouse_button_parsing() {
+        // Test valid button names
+        assert_eq!(mouse_button(Some("left".to_string())).unwrap(), "1");
+        assert_eq!(mouse_button(Some("LEFT".to_string())).unwrap(), "1");
+        assert_eq!(mouse_button(Some("middle".to_string())).unwrap(), "2");
+        assert_eq!(mouse_button(Some("right".to_string())).unwrap(), "3");
+
+        // Test numeric buttons
+        assert_eq!(mouse_button(Some("1".to_string())).unwrap(), "1");
+        assert_eq!(mouse_button(Some("2".to_string())).unwrap(), "2");
+        assert_eq!(mouse_button(Some("3".to_string())).unwrap(), "3");
+
+        // Test default
+        assert_eq!(mouse_button(None).unwrap(), "1");
+
+        // Test invalid
+        assert!(mouse_button(Some("invalid".to_string())).is_err());
+    }
+
+    #[test]
+    fn test_scroll_button_parsing() {
+        // Test valid directions
+        assert_eq!(scroll_button("up").unwrap(), "4");
+        assert_eq!(scroll_button("UP").unwrap(), "4");
+        assert_eq!(scroll_button("down").unwrap(), "5");
+        assert_eq!(scroll_button("DOWN").unwrap(), "5");
+
+        // Test invalid
+        assert!(scroll_button("left").is_err());
+        assert!(scroll_button("invalid").is_err());
+    }
+
+    #[test]
+    fn test_requires_confirmation() {
+        // Test dangerous combos that require confirmation
+        assert!(requires_confirmation(&["alt".to_string(), "f4".to_string()]));
+        assert!(requires_confirmation(&["Alt".to_string(), "F4".to_string()]));
+        assert!(requires_confirmation(&["ctrl".to_string(), "w".to_string()]));
+        assert!(requires_confirmation(&["ctrl".to_string(), "q".to_string()]));
+        assert!(requires_confirmation(&[
+            "ctrl".to_string(),
+            "shift".to_string(),
+            "q".to_string()
+        ]));
+        assert!(requires_confirmation(&["super".to_string(), "q".to_string()]));
+        assert!(requires_confirmation(&[
+            "ctrl".to_string(),
+            "alt".to_string(),
+            "backspace".to_string()
+        ]));
+
+        // Test cmd/meta aliases for super
+        assert!(requires_confirmation(&["cmd".to_string(), "q".to_string()]));
+        assert!(requires_confirmation(&["meta".to_string(), "q".to_string()]));
+
+        // Test safe combos that don't require confirmation
+        assert!(!requires_confirmation(&["ctrl".to_string(), "c".to_string()]));
+        assert!(!requires_confirmation(&["ctrl".to_string(), "v".to_string()]));
+        assert!(!requires_confirmation(&["alt".to_string(), "tab".to_string()]));
+        assert!(!requires_confirmation(&["ctrl".to_string(), "alt".to_string(), "t".to_string()]));
+    }
+
+    #[test]
+    fn test_normalize_key() {
+        // Test key aliases
+        assert_eq!(normalize_key("cmd"), "super");
+        assert_eq!(normalize_key("meta"), "super");
+        assert_eq!(normalize_key("super"), "super");
+        assert_eq!(normalize_key("control"), "ctrl");
+        assert_eq!(normalize_key("ctrl"), "ctrl");
+
+        // Test case insensitivity
+        assert_eq!(normalize_key("CMD"), "super");
+        assert_eq!(normalize_key("CONTROL"), "ctrl");
+
+        // Test passthrough
+        assert_eq!(normalize_key("a"), "a");
+        assert_eq!(normalize_key("f4"), "f4");
+        assert_eq!(normalize_key("backspace"), "backspace");
+
+        // Test whitespace trimming
+        assert_eq!(normalize_key("  ctrl  "), "ctrl");
+    }
+
+    #[test]
+    fn test_ensure_display_on_linux() {
+        if !cfg!(target_os = "linux") {
+            // Test should pass on non-Linux (returns error as expected)
+            assert!(ensure_display().is_err());
+        } else {
+            // On Linux, result depends on DISPLAY being set
+            // We don't modify env in tests, just verify it doesn't panic
+            let _ = ensure_display();
+        }
+    }
+
+    #[test]
+    fn test_cleanup_old_screenshots_does_not_panic() {
+        // This test just verifies cleanup doesn't panic
+        // It won't actually clean anything unless there are old screenshots
+        cleanup_old_screenshots();
+    }
+
+    #[test]
+    fn test_parse_args_valid() {
+        let json = r#"{"x": 100.0, "y": 200.0}"#;
+        let result: Result<ClickArgs, _> = parse_args(json);
+        assert!(result.is_ok());
+        let args = result.unwrap();
+        assert_eq!(args.x, 100.0);
+        assert_eq!(args.y, 200.0);
+    }
+
+    #[test]
+    fn test_parse_args_invalid() {
+        let json = r#"{"invalid": true}"#;
+        let result: Result<ClickArgs, _> = parse_args(json);
+        assert!(result.is_err());
+    }
 }
