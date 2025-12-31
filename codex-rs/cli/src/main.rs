@@ -36,6 +36,7 @@ mod wsl_paths;
 
 use crate::mcp_cmd::McpCli;
 
+use codex_core::COMPUTER_USE_PROMPT;
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
 use codex_core::config::find_codex_home;
@@ -80,6 +81,10 @@ enum Subcommand {
     /// Run Codex non-interactively.
     #[clap(visible_alias = "e")]
     Exec(ExecCli),
+
+    /// Run Codex in computer-use mode (CLI-only or GUI-enabled).
+    #[clap(name = "computer-use", visible_alias = "cu")]
+    ComputerUse(ComputerUseCommand),
 
     /// Run a code review non-interactively.
     Review(ReviewArgs),
@@ -138,6 +143,20 @@ struct CompletionCommand {
     /// Shell to generate completions for
     #[clap(value_enum, default_value_t = Shell::Bash)]
     shell: Shell,
+}
+
+#[derive(Debug, Parser)]
+struct ComputerUseCommand {
+    #[clap(flatten)]
+    exec: ExecCli,
+
+    /// Disable GUI tools (shell-only).
+    #[arg(long, conflicts_with = "gui")]
+    headless: bool,
+
+    /// Enable GUI tools (screenshots + input).
+    #[arg(long, conflicts_with = "headless")]
+    gui: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -460,6 +479,28 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
                 root_config_overrides.clone(),
             );
             codex_exec::run_main(exec_cli, codex_linux_sandbox_exe).await?;
+        }
+        Some(Subcommand::ComputerUse(mut computer_cli)) => {
+            prepend_config_flags(
+                &mut computer_cli.exec.config_overrides,
+                root_config_overrides.clone(),
+            );
+            let enable_gui = computer_cli.gui;
+            computer_cli
+                .exec
+                .config_overrides
+                .raw_overrides
+                .push(format!("features.computer_use_gui={enable_gui}"));
+            let harness_overrides = codex_exec::HarnessOverrides {
+                base_instructions: Some(COMPUTER_USE_PROMPT.to_string()),
+                ..Default::default()
+            };
+            codex_exec::run_main_with_harness_overrides(
+                computer_cli.exec,
+                codex_linux_sandbox_exe,
+                harness_overrides,
+            )
+            .await?;
         }
         Some(Subcommand::Review(review_args)) => {
             let mut exec_cli = ExecCli::try_parse_from(["codex", "exec"])?;

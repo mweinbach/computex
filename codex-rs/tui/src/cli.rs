@@ -86,5 +86,8 @@ pub struct Cli {
     pub add_dir: Vec<PathBuf>,
 
     #[clap(skip)]
+    pub base_instructions_override: Option<String>,
+
+    #[clap(skip)]
     pub config_overrides: CliConfigOverrides,
 }

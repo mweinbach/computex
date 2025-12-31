@@ -4,15 +4,18 @@ Looking for something specific? Jump ahead:
 
 - [Tips & shortcuts](#tips--shortcuts) – hotkeys, resume flow, prompts
 - [Non-interactive runs](./exec.md) – automate with `codex exec`
+- [Computer use](./computer-use.md) – Computex CLI (`--headless`/`--gui`)
 - Ready for deeper customization? Head to [`advanced.md`](./advanced.md)
 
 ### CLI usage
 
-| Command            | Purpose                            | Example                         |
-| ------------------ | ---------------------------------- | ------------------------------- |
-| `codex`            | Interactive TUI                    | `codex`                         |
-| `codex "..."`      | Initial prompt for interactive TUI | `codex "fix lint errors"`       |
-| `codex exec "..."` | Non-interactive "automation mode"  | `codex exec "explain utils.ts"` |
+| Command                            | Purpose                            | Example                                          |
+| ---------------------------------- | ---------------------------------- | ------------------------------------------------ |
+| `codex`                            | Interactive TUI                    | `codex`                                          |
+| `codex "..."`                      | Initial prompt for interactive TUI | `codex "fix lint errors"`                        |
+| `codex exec "..."`                 | Non-interactive "automation mode"  | `codex exec "explain utils.ts"`                  |
+| `computex --gui "..."`   | Computer-use mode (GUI enabled)    | `computex --gui "open settings"`       |
+| `computex --headless "..."` | Computer-use mode (shell-only)     | `computex --headless "list /var/log"`  |
 
 Key flags: `--model/-m`, `--ask-for-approval/-a`.
 

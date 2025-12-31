@@ -67,7 +67,63 @@ enum InitialOperation {
     },
 }
 
+#[derive(Default, Debug, Clone)]
+pub struct HarnessOverrides {
+    pub base_instructions: Option<String>,
+    pub developer_instructions: Option<String>,
+    pub approval_policy: Option<AskForApproval>,
+    pub sandbox_mode: Option<SandboxMode>,
+    pub compact_prompt: Option<String>,
+    pub tools_web_search_request: Option<bool>,
+    pub additional_writable_roots: Vec<PathBuf>,
+}
+
+impl HarnessOverrides {
+    fn apply(self, overrides: &mut ConfigOverrides) {
+        let HarnessOverrides {
+            base_instructions,
+            developer_instructions,
+            approval_policy,
+            sandbox_mode,
+            compact_prompt,
+            tools_web_search_request,
+            additional_writable_roots,
+        } = self;
+        if base_instructions.is_some() {
+            overrides.base_instructions = base_instructions;
+        }
+        if developer_instructions.is_some() {
+            overrides.developer_instructions = developer_instructions;
+        }
+        if approval_policy.is_some() {
+            overrides.approval_policy = approval_policy;
+        }
+        if sandbox_mode.is_some() {
+            overrides.sandbox_mode = sandbox_mode;
+        }
+        if compact_prompt.is_some() {
+            overrides.compact_prompt = compact_prompt;
+        }
+        if tools_web_search_request.is_some() {
+            overrides.tools_web_search_request = tools_web_search_request;
+        }
+        if !additional_writable_roots.is_empty() {
+            overrides
+                .additional_writable_roots
+                .extend(additional_writable_roots);
+        }
+    }
+}
+
 pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()> {
+    run_main_with_harness_overrides(cli, codex_linux_sandbox_exe, HarnessOverrides::default()).await
+}
+
+pub async fn run_main_with_harness_overrides(
+    cli: Cli,
+    codex_linux_sandbox_exe: Option<PathBuf>,
+    harness_overrides: HarnessOverrides,
+) -> anyhow::Result<()> {
     if let Err(err) = set_default_originator("codex_exec".to_string()) {
         tracing::warn!(?err, "Failed to set codex exec originator override {err:?}");
     }
@@ -196,7 +252,7 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
     };
 
     // Load configuration and determine approval policy
-    let overrides = ConfigOverrides {
+    let mut overrides = ConfigOverrides {
         model,
         review_model: None,
         config_profile,
@@ -214,6 +270,7 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         tools_web_search_request: None,
         additional_writable_roots: add_dir,
     };
+    harness_overrides.apply(&mut overrides);
 
     let config =
         Config::load_with_cli_overrides_and_harness_overrides(cli_kv_overrides, overrides).await?;

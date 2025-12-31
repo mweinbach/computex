@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use tokio::sync::Notify;
 use tokio::sync::mpsc;
 use tokio::time::Duration;
@@ -270,6 +272,7 @@ impl UnifiedExecSessionManager {
 
         let text = String::from_utf8_lossy(&collected).to_string();
         let output = formatted_truncate_text(&text, TruncationPolicy::Tokens(max_tokens));
+        let output_fallback = output.clone();
         let original_token_count = approx_token_count(&text);
         let chunk_id = generate_chunk_id();
 
@@ -278,6 +281,7 @@ impl UnifiedExecSessionManager {
         // that through so the handler can tag TerminalInteraction with an
         // appropriate process_id and exit_code.
         let status = self.refresh_session_state(process_id.as_str()).await;
+        let mut exited_entry = None;
         let (process_id, exit_code, event_call_id) = match status {
             SessionStatus::Alive {
                 exit_code,
@@ -286,6 +290,7 @@ impl UnifiedExecSessionManager {
             } => (Some(process_id), exit_code, call_id),
             SessionStatus::Exited { exit_code, entry } => {
                 let call_id = entry.call_id.clone();
+                exited_entry = Some(entry);
                 (None, exit_code, call_id)
             }
             SessionStatus::Unknown => {
@@ -307,6 +312,26 @@ impl UnifiedExecSessionManager {
             session_command: Some(session_command.clone()),
         };
 
+        if let Some(entry) = exited_entry
+            && !entry.end_emitted.swap(true, Ordering::SeqCst)
+        {
+            let exit_code = exit_code.unwrap_or(-1);
+            let duration = Instant::now().saturating_duration_since(entry.started_at);
+            emit_exec_end_for_unified_exec(
+                Arc::clone(&entry.session_ref),
+                Arc::clone(&entry.turn_ref),
+                entry.call_id.clone(),
+                entry.command.clone(),
+                entry.cwd.clone(),
+                Some(entry.process_id.clone()),
+                Arc::clone(&entry.transcript),
+                output_fallback,
+                exit_code,
+                duration,
+            )
+            .await;
+        }
+
         if response.process_id.is_some() {
             Self::emit_waiting_status(&session_ref, &turn_ref, &session_command).await;
         }
@@ -323,7 +348,7 @@ impl UnifiedExecSessionManager {
         let exit_code = entry.session.exit_code();
         let process_id = entry.process_id.clone();
 
-        if entry.session.has_exited() {
+        if entry.session.has_exited() || exit_code.is_some() {
             let Some(entry) = store.remove(&process_id) else {
                 return SessionStatus::Unknown;
             };
@@ -392,6 +417,7 @@ impl UnifiedExecSessionManager {
         process_id: String,
         transcript: Arc<tokio::sync::Mutex<CommandTranscript>>,
     ) {
+        let end_emitted = Arc::new(AtomicBool::new(false));
         let entry = SessionEntry {
             session: Arc::clone(&session),
             session_ref: Arc::clone(&context.session),
@@ -399,6 +425,10 @@ impl UnifiedExecSessionManager {
             call_id: context.call_id.clone(),
             process_id: process_id.clone(),
             command: command.to_vec(),
+            cwd: cwd.clone(),
+            transcript: Arc::clone(&transcript),
+            end_emitted: Arc::clone(&end_emitted),
+            started_at,
             last_used: started_at,
         };
         let number_sessions = {
@@ -428,6 +458,7 @@ impl UnifiedExecSessionManager {
             process_id,
             transcript,
             started_at,
+            end_emitted,
         );
     }
 

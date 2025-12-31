@@ -86,6 +86,9 @@ pub struct Cli {
     pub add_dir: Vec<PathBuf>,
 
     #[clap(skip)]
+    pub base_instructions_override: Option<String>,
+
+    #[clap(skip)]
     pub config_overrides: CliConfigOverrides,
 }
 
@@ -109,6 +112,7 @@ impl From<codex_tui::Cli> for Cli {
             cwd: cli.cwd,
             web_search: cli.web_search,
             add_dir: cli.add_dir,
+            base_instructions_override: cli.base_instructions_override,
             config_overrides: cli.config_overrides,
         }
     }

@@ -33,6 +33,20 @@ Then simply run `codex` to get started:
 codex
 ```
 
+### Computer use (Linux/X11)
+
+Computex is the computer-use CLI for Linux and launches the interactive TUI. Use `--headless` for shell-only, or `--gui` for on-demand screenshots and input.
+
+```shell
+# Shell-only (no GUI tools)
+computex --headless "summarize /var/log/syslog"
+
+# GUI-enabled (screenshots + input)
+computex --gui "open settings"
+```
+
+GUI mode requires an X11 session plus `xdotool` and `imagemagick`. See [Computer use](./docs/computer-use.md) for details.
+
 If you're running into upgrade issues with Homebrew, see the [FAQ entry on brew upgrade codex](./docs/faq.md#brew-upgrade-codex-isnt-upgrading-me).
 
 <details>
@@ -82,6 +96,7 @@ See the [Execpolicy quickstart](./docs/execpolicy.md) to set up rules that gover
   - [Example prompts](./docs/getting-started.md#example-prompts)
   - [Custom prompts](./docs/prompts.md)
   - [Memory with AGENTS.md](./docs/getting-started.md#memory-with-agentsmd)
+- [**Computer use**](./docs/computer-use.md)
 - [**Configuration**](./docs/config.md)
   - [Example config](./docs/example-config.md)
 - [**Sandbox & approvals**](./docs/sandbox.md)

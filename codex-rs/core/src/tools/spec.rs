@@ -22,6 +22,7 @@ pub(crate) struct ToolsConfig {
     pub apply_patch_tool_type: Option<ApplyPatchToolType>,
     pub web_search_request: bool,
     pub include_view_image_tool: bool,
+    pub include_computer_use_tools: bool,
     pub experimental_supported_tools: Vec<String>,
 }
 
@@ -39,6 +40,7 @@ impl ToolsConfig {
         let include_apply_patch_tool = features.enabled(Feature::ApplyPatchFreeform);
         let include_web_search_request = features.enabled(Feature::WebSearchRequest);
         let include_view_image_tool = features.enabled(Feature::ViewImageTool);
+        let include_computer_use_tools = features.enabled(Feature::ComputerUseGui);
 
         let shell_type = if !features.enabled(Feature::ShellTool) {
             ConfigShellToolType::Disabled
@@ -70,6 +72,7 @@ impl ToolsConfig {
             apply_patch_tool_type,
             web_search_request: include_web_search_request,
             include_view_image_tool,
+            include_computer_use_tools,
             experimental_supported_tools: model_family.experimental_supported_tools.clone(),
         }
     }
@@ -411,6 +414,210 @@ fn create_view_image_tool() -> ToolSpec {
         parameters: JsonSchema::Object {
             properties,
             required: Some(vec!["path".to_string()]),
+            additional_properties: Some(false.into()),
+        },
+    })
+}
+
+fn create_computer_screenshot_tool() -> ToolSpec {
+    let properties = BTreeMap::new();
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "computer_screenshot".to_string(),
+        description:
+            "Capture a single on-demand screenshot of the GUI (1280x720 coordinate space)."
+                .to_string(),
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties,
+            required: None,
+            additional_properties: Some(false.into()),
+        },
+    })
+}
+
+fn create_computer_click_tool() -> ToolSpec {
+    let mut properties = BTreeMap::new();
+    properties.insert(
+        "x".to_string(),
+        JsonSchema::Number {
+            description: Some("X coordinate in 1280x720 space.".to_string()),
+        },
+    );
+    properties.insert(
+        "y".to_string(),
+        JsonSchema::Number {
+            description: Some("Y coordinate in 1280x720 space.".to_string()),
+        },
+    );
+    properties.insert(
+        "button".to_string(),
+        JsonSchema::String {
+            description: Some("Mouse button: left (default), right, or middle.".to_string()),
+        },
+    );
+    properties.insert(
+        "double".to_string(),
+        JsonSchema::Boolean {
+            description: Some("Double-click when true.".to_string()),
+        },
+    );
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "computer_click".to_string(),
+        description: "Move the mouse to a coordinate and click (coordinates are 1280x720)."
+            .to_string(),
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties,
+            required: Some(vec!["x".to_string(), "y".to_string()]),
+            additional_properties: Some(false.into()),
+        },
+    })
+}
+
+fn create_computer_drag_tool() -> ToolSpec {
+    let mut properties = BTreeMap::new();
+    properties.insert(
+        "from_x".to_string(),
+        JsonSchema::Number {
+            description: Some("Start X coordinate in 1280x720 space.".to_string()),
+        },
+    );
+    properties.insert(
+        "from_y".to_string(),
+        JsonSchema::Number {
+            description: Some("Start Y coordinate in 1280x720 space.".to_string()),
+        },
+    );
+    properties.insert(
+        "to_x".to_string(),
+        JsonSchema::Number {
+            description: Some("End X coordinate in 1280x720 space.".to_string()),
+        },
+    );
+    properties.insert(
+        "to_y".to_string(),
+        JsonSchema::Number {
+            description: Some("End Y coordinate in 1280x720 space.".to_string()),
+        },
+    );
+    properties.insert(
+        "button".to_string(),
+        JsonSchema::String {
+            description: Some("Mouse button: left (default), right, or middle.".to_string()),
+        },
+    );
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "computer_drag".to_string(),
+        description: "Click-and-drag between two coordinates (coordinates are 1280x720)."
+            .to_string(),
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties,
+            required: Some(vec![
+                "from_x".to_string(),
+                "from_y".to_string(),
+                "to_x".to_string(),
+                "to_y".to_string(),
+            ]),
+            additional_properties: Some(false.into()),
+        },
+    })
+}
+
+fn create_computer_scroll_tool() -> ToolSpec {
+    let mut properties = BTreeMap::new();
+    properties.insert(
+        "direction".to_string(),
+        JsonSchema::String {
+            description: Some("Scroll direction: up or down.".to_string()),
+        },
+    );
+    properties.insert(
+        "amount".to_string(),
+        JsonSchema::Number {
+            description: Some("Number of scroll ticks (defaults to 3).".to_string()),
+        },
+    );
+    properties.insert(
+        "x".to_string(),
+        JsonSchema::Number {
+            description: Some("Optional X coordinate in 1280x720 space.".to_string()),
+        },
+    );
+    properties.insert(
+        "y".to_string(),
+        JsonSchema::Number {
+            description: Some("Optional Y coordinate in 1280x720 space.".to_string()),
+        },
+    );
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "computer_scroll".to_string(),
+        description: "Scroll the mouse wheel (coordinates are 1280x720 if provided).".to_string(),
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties,
+            required: Some(vec!["direction".to_string()]),
+            additional_properties: Some(false.into()),
+        },
+    })
+}
+
+fn create_computer_type_tool() -> ToolSpec {
+    let mut properties = BTreeMap::new();
+    properties.insert(
+        "text".to_string(),
+        JsonSchema::String {
+            description: Some("Text to type.".to_string()),
+        },
+    );
+    properties.insert(
+        "delay_ms".to_string(),
+        JsonSchema::Number {
+            description: Some("Optional delay between keystrokes in milliseconds.".to_string()),
+        },
+    );
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "computer_type".to_string(),
+        description: "Type text at the current focus.".to_string(),
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties,
+            required: Some(vec!["text".to_string()]),
+            additional_properties: Some(false.into()),
+        },
+    })
+}
+
+fn create_computer_key_tool() -> ToolSpec {
+    let mut properties = BTreeMap::new();
+    properties.insert(
+        "keys".to_string(),
+        JsonSchema::Array {
+            items: Box::new(JsonSchema::String { description: None }),
+            description: Some("Key chord, e.g. [\"ctrl\", \"c\"].".to_string()),
+        },
+    );
+    properties.insert(
+        "confirm".to_string(),
+        JsonSchema::Boolean {
+            description: Some(
+                "Required for destructive combos (Alt+F4, Ctrl+Q, Ctrl+W, etc.).".to_string(),
+            ),
+        },
+    );
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "computer_key".to_string(),
+        description: "Press a key or key chord.".to_string(),
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties,
+            required: Some(vec!["keys".to_string()]),
             additional_properties: Some(false.into()),
         },
     })
@@ -981,6 +1188,7 @@ pub(crate) fn build_specs(
     mcp_tools: Option<HashMap<String, mcp_types::Tool>>,
 ) -> ToolRegistryBuilder {
     use crate::tools::handlers::ApplyPatchHandler;
+    use crate::tools::handlers::ComputerUseHandler;
     use crate::tools::handlers::GrepFilesHandler;
     use crate::tools::handlers::ListDirHandler;
     use crate::tools::handlers::McpHandler;
@@ -1001,6 +1209,7 @@ pub(crate) fn build_specs(
     let plan_handler = Arc::new(PlanHandler);
     let apply_patch_handler = Arc::new(ApplyPatchHandler);
     let view_image_handler = Arc::new(ViewImageHandler);
+    let computer_use_handler = Arc::new(ComputerUseHandler);
     let mcp_handler = Arc::new(McpHandler);
     let mcp_resource_handler = Arc::new(McpResourceHandler);
     let shell_command_handler = Arc::new(ShellCommandHandler);
@@ -1100,6 +1309,21 @@ pub(crate) fn build_specs(
     if config.include_view_image_tool {
         builder.push_spec_with_parallel_support(create_view_image_tool(), true);
         builder.register_handler("view_image", view_image_handler);
+    }
+
+    if config.include_computer_use_tools {
+        builder.push_spec_with_parallel_support(create_computer_screenshot_tool(), true);
+        builder.push_spec_with_parallel_support(create_computer_click_tool(), true);
+        builder.push_spec_with_parallel_support(create_computer_drag_tool(), true);
+        builder.push_spec_with_parallel_support(create_computer_scroll_tool(), true);
+        builder.push_spec_with_parallel_support(create_computer_type_tool(), true);
+        builder.push_spec_with_parallel_support(create_computer_key_tool(), true);
+        builder.register_handler("computer_screenshot", computer_use_handler.clone());
+        builder.register_handler("computer_click", computer_use_handler.clone());
+        builder.register_handler("computer_drag", computer_use_handler.clone());
+        builder.register_handler("computer_scroll", computer_use_handler.clone());
+        builder.register_handler("computer_type", computer_use_handler.clone());
+        builder.register_handler("computer_key", computer_use_handler);
     }
 
     if let Some(mcp_tools) = mcp_tools {
@@ -1322,6 +1546,29 @@ mod tests {
                 "update_plan",
                 "apply_patch",
                 "view_image",
+            ],
+        );
+    }
+
+    #[test]
+    fn test_build_specs_gpt5_codex_computer_use_gui() {
+        assert_model_tools(
+            "gpt-5-codex",
+            Features::with_defaults().enable(Feature::ComputerUseGui),
+            &[
+                "shell_command",
+                "list_mcp_resources",
+                "list_mcp_resource_templates",
+                "read_mcp_resource",
+                "update_plan",
+                "apply_patch",
+                "view_image",
+                "computer_screenshot",
+                "computer_click",
+                "computer_drag",
+                "computer_scroll",
+                "computer_type",
+                "computer_key",
             ],
         );
     }

@@ -68,6 +68,8 @@ pub enum Feature {
     ShellTool,
 
     // Experimental
+    /// Enable computer-use GUI tools (screenshots + input).
+    ComputerUseGui,
     /// Use the single unified PTY-backed exec tool.
     UnifiedExec,
     /// Include the freeform apply_patch tool.
@@ -350,6 +352,12 @@ pub const FEATURES: &[FeatureSpec] = &[
     FeatureSpec {
         id: Feature::ApplyPatchFreeform,
         key: "apply_patch_freeform",
+        stage: Stage::Experimental,
+        default_enabled: false,
+    },
+    FeatureSpec {
+        id: Feature::ComputerUseGui,
+        key: "computer_use_gui",
         stage: Stage::Experimental,
         default_enabled: false,
     },

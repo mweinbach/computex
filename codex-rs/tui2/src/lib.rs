@@ -227,7 +227,7 @@ pub async fn run_main(
         model_provider: model_provider_override.clone(),
         config_profile: cli.config_profile.clone(),
         codex_linux_sandbox_exe,
-        base_instructions: None,
+        base_instructions: cli.base_instructions_override.clone(),
         developer_instructions: None,
         compact_prompt: None,
         include_apply_patch_tool: None,
