@@ -3,16 +3,16 @@ name: shell-tool-mcp CI
 on:
   push:
     paths:
-      - "shell-tool-mcp/**"
+      - "computex/shell-tool-mcp/**"
       - ".github/workflows/shell-tool-mcp-ci.yml"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
+      - "computex/pnpm-lock.yaml"
+      - "computex/pnpm-workspace.yaml"
   pull_request:
     paths:
-      - "shell-tool-mcp/**"
+      - "computex/shell-tool-mcp/**"
       - ".github/workflows/shell-tool-mcp-ci.yml"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
+      - "computex/pnpm-lock.yaml"
+      - "computex/pnpm-workspace.yaml"
 
 env:
   NODE_VERSION: 22
@@ -37,12 +37,16 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+        working-directory: computex
 
       - name: Format check
         run: pnpm --filter @openai/codex-shell-tool-mcp run format
+        working-directory: computex
 
       - name: Run tests
         run: pnpm --filter @openai/codex-shell-tool-mcp test
+        working-directory: computex
 
       - name: Build
         run: pnpm --filter @openai/codex-shell-tool-mcp run build
+        working-directory: computex

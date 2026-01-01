@@ -1,30 +1,16 @@
-## Computer use (CLI)
+## Computer use (macOS VM)
 
-Computex runs as a computer-use agent in the interactive TUI. Use `--headless` to run shell-only, or `--gui` to enable on-demand screenshots and GUI input tools.
+Computex runs as a computer-use agent inside a macOS virtual machine managed by the host app in the top-level `macos-app/` directory. Codex core executes inside the guest and streams all events to the host UI.
 
 ### Usage
 
-```bash
-# Shell-only (no GUI tools)
-computex --headless "summarize /var/log/syslog"
-
-# GUI-enabled (on-demand screenshots + input)
-computex --gui "open the browser and check the system status page"
-```
-
-### GUI dependencies (Ubuntu + X11)
-
-GUI mode requires an X11 session and a few helper binaries:
-
-```bash
-sudo apt-get install -y xdotool imagemagick
-```
-
-If `DISPLAY` is not set, GUI tools will fail. Launch Computex from an X11 session (or forward `DISPLAY`).
+- Launch the host app to create or resume a VM session.
+- Complete the first-boot macOS setup once.
+- Start a primary (persistent) session or create a disposable session for each task.
 
 ### Tool overview
 
-When `--gui` is enabled, Computex exposes these tools:
+Computex exposes these tools:
 
 - `computer_screenshot` – capture a single screenshot (1280x720 coordinate space)
 - `computer_click` – move and click at a coordinate

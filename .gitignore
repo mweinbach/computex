@@ -12,9 +12,7 @@ dist/
 build/
 out/
 storybook-static/
-
-# ignore README for publishing
-codex-cli/README.md
+.build/
 
 # ignore Nix derivation results
 result
@@ -73,6 +71,19 @@ Thumbs.db
 Icon?
 .Spotlight-V100/
 
+# Xcode / SwiftPM
+DerivedData/
+*.xcworkspace/
+*.xcuserstate
+*.xcuserdata/
+*.xcodeproj/xcuserdata/
+.swiftpm/
+Package.resolved
+*.xcresult
+*.xcarchive
+*.dSYM
+*.app
+
 # Unwanted package managers
 .yarn/
 yarn.lock
@@ -89,4 +100,3 @@ CHANGELOG.ignore.md
 # Python bytecode files
 __pycache__/
 *.pyc
-

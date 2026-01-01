@@ -35,13 +35,13 @@ jobs:
             mapfile -t files < <(git diff --name-only --no-renames "$BASE_SHA" "$HEAD_SHA")
           else
             # On push / manual runs, default to running everything
-            files=("codex-rs/force" ".github/force")
+            files=("computex/codex-rs/force" ".github/force")
           fi
 
           codex=false
           workflows=false
           for f in "${files[@]}"; do
-            [[ $f == codex-rs/* ]] && codex=true
+            [[ $f == computex/codex-rs/* ]] && codex=true
             [[ $f == .github/* ]] && workflows=true
           done
 
@@ -56,7 +56,7 @@ jobs:
     if: ${{ needs.changed.outputs.codex == 'true' || needs.changed.outputs.workflows == 'true' || github.event_name == 'push' }}
     defaults:
       run:
-        working-directory: codex-rs
+        working-directory: computex/codex-rs
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@1.90
@@ -74,7 +74,7 @@ jobs:
     if: ${{ needs.changed.outputs.codex == 'true' || needs.changed.outputs.workflows == 'true' || github.event_name == 'push' }}
     defaults:
       run:
-        working-directory: codex-rs
+        working-directory: computex/codex-rs
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@1.90
@@ -95,7 +95,7 @@ jobs:
     if: ${{ needs.changed.outputs.codex == 'true' || needs.changed.outputs.workflows == 'true' || github.event_name == 'push' }}
     defaults:
       run:
-        working-directory: codex-rs
+        working-directory: computex/codex-rs
     env:
       # Speed up repeated builds across CI runs by caching compiled objects (non-Windows).
       USE_SCCACHE: ${{ startsWith(matrix.runner, 'windows') && 'false' || 'true' }}
@@ -157,7 +157,7 @@ jobs:
 
       - name: Compute lockfile hash
         id: lockhash
-        working-directory: codex-rs
+        working-directory: computex/codex-rs
         shell: bash
         run: |
           set -euo pipefail
@@ -342,7 +342,7 @@ jobs:
     if: ${{ needs.changed.outputs.codex == 'true' || needs.changed.outputs.workflows == 'true' || github.event_name == 'push' }}
     defaults:
       run:
-        working-directory: codex-rs
+        working-directory: computex/codex-rs
     env:
       # Speed up repeated builds across CI runs by caching compiled objects (non-Windows).
       USE_SCCACHE: ${{ startsWith(matrix.runner, 'windows') && 'false' || 'true' }}
@@ -398,7 +398,7 @@ jobs:
 
       - name: Compute lockfile hash
         id: lockhash
-        working-directory: codex-rs
+        working-directory: computex/codex-rs
         shell: bash
         run: |
           set -euo pipefail

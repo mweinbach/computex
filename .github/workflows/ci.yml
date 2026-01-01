@@ -39,7 +39,7 @@ jobs:
           # Use a rust-release version that includes all native binaries.
           CODEX_VERSION=0.74.0
           OUTPUT_DIR="${RUNNER_TEMP}"
-          python3 ./scripts/stage_npm_packages.py \
+          python3 ./computex/scripts/stage_npm_packages.py \
             --release-version "$CODEX_VERSION" \
             --package codex \
             --output-dir "$OUTPUT_DIR"
@@ -53,14 +53,14 @@ jobs:
           path: ${{ steps.stage_npm_package.outputs.pack_output }}
 
       - name: Ensure root README.md contains only ASCII and certain Unicode code points
-        run: ./scripts/asciicheck.py README.md
+        run: ./computex/scripts/asciicheck.py README.md
       - name: Check root README ToC
-        run: python3 scripts/readme_toc.py README.md
+        run: python3 computex/scripts/readme_toc.py README.md
 
-      - name: Ensure codex-cli/README.md contains only ASCII and certain Unicode code points
-        run: ./scripts/asciicheck.py codex-cli/README.md
-      - name: Check codex-cli/README ToC
-        run: python3 scripts/readme_toc.py codex-cli/README.md
+      - name: Ensure computex/codex-cli/README.md contains only ASCII and certain Unicode code points
+        run: ./computex/scripts/asciicheck.py computex/codex-cli/README.md
+      - name: Check computex/codex-cli/README ToC
+        run: python3 computex/scripts/readme_toc.py computex/codex-cli/README.md
 
       - name: Prettier (run `pnpm run format:fix` to fix)
         run: pnpm run format
