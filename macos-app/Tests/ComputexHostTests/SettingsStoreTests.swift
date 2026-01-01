@@ -20,14 +20,12 @@ final class SettingsStoreTests: XCTestCase {
                 downloadedAt: Date()
             )],
             preferences: VMPrefs(cpuCount: 4, memoryGB: 8, diskGB: 80),
+            credentials: VMCredentials(username: "tester", password: "secret"),
             catalog: CatalogCache(lastUpdated: Date(), lastError: nil, latestLabel: "Latest")
         )
 
         store.save(settings)
         let loaded = store.load()
-        XCTAssertEqual(loaded.selectedIPSWID, settings.selectedIPSWID)
-        XCTAssertEqual(loaded.ipsws.count, 1)
-        XCTAssertEqual(loaded.ipsws.first?.id, "latest")
-        XCTAssertEqual(loaded.preferences, settings.preferences)
+        XCTAssertEqual(loaded, settings)
     }
 }

@@ -19,3 +19,22 @@ enum SessionKind: String, Codable {
         }
     }
 }
+
+enum SessionCloneSource: String, CaseIterable, Identifiable {
+    case base
+    case primary
+    case selected
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .base:
+            return "Base VM"
+        case .primary:
+            return "Primary VM"
+        case .selected:
+            return "Selected VM"
+        }
+    }
+}

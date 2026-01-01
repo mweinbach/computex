@@ -18,6 +18,7 @@ struct VMConfigurationBuilder {
             machineIdentifier: machineIdentifier,
             auxiliaryStorage: auxiliaryStorage
         )
+        AppLog.info("Config: CPU=\(sizing.cpuCount), Memory=\(sizing.memorySize / 1024 / 1024 / 1024)GB, Disk=\(sizing.diskSizeGB)GB, Display=\(Int(displaySize.width))x\(Int(displaySize.height))")
         configuration.cpuCount = sizing.cpuCount
         configuration.memorySize = sizing.memorySize
         configuration.bootLoader = VZMacOSBootLoader()
@@ -28,9 +29,19 @@ struct VMConfigurationBuilder {
         configuration.keyboards = [VZMacKeyboardConfiguration()]
         configuration.audioDevices = [makeAudioDevice()]
 
-        try configuration.validate()
+        do {
+            try configuration.validate()
+        } catch {
+            AppLog.error("Configuration validation failed: \(error.localizedDescription) (\(ErrorDiagnostics.describe(error)))")
+            throw error
+        }
         if #available(macOS 14.0, *) {
-            try configuration.validateSaveRestoreSupport()
+            do {
+                try configuration.validateSaveRestoreSupport()
+            } catch {
+                AppLog.error("Configuration save/restore validation failed: \(error.localizedDescription) (\(ErrorDiagnostics.describe(error)))")
+                throw error
+            }
         }
         return configuration
     }
@@ -72,16 +83,24 @@ struct VMConfigurationBuilder {
 
     private func makeAudioDevice() -> VZVirtioSoundDeviceConfiguration {
         let audio = VZVirtioSoundDeviceConfiguration()
-        let input = VZVirtioSoundDeviceInputStreamConfiguration()
-        input.source = VZHostAudioInputStreamSource()
+        var streams: [VZVirtioSoundDeviceStreamConfiguration] = []
+        if RuntimeDiagnostics.hasUsageDescription("NSMicrophoneUsageDescription") {
+            let input = VZVirtioSoundDeviceInputStreamConfiguration()
+            input.source = VZHostAudioInputStreamSource()
+            streams.append(input)
+        } else {
+            AppLog.info("Skipping audio input: NSMicrophoneUsageDescription missing.")
+        }
         let output = VZVirtioSoundDeviceOutputStreamConfiguration()
         output.sink = VZHostAudioOutputStreamSink()
-        audio.streams = [input, output]
+        streams.append(output)
+        audio.streams = streams
         return audio
     }
 
     static func loadHardwareModel(from url: URL) throws -> VZMacHardwareModel {
         let data = try Data(contentsOf: url)
+        AppLog.info("Loaded hardware model from \(url.path) (\(data.count) bytes).")
         guard let model = VZMacHardwareModel(dataRepresentation: data) else {
             throw VMError.invalidHardwareModel
         }
@@ -90,6 +109,7 @@ struct VMConfigurationBuilder {
 
     static func loadMachineIdentifier(from url: URL) throws -> VZMacMachineIdentifier {
         let data = try Data(contentsOf: url)
+        AppLog.info("Loaded machine identifier from \(url.path) (\(data.count) bytes).")
         guard let identifier = VZMacMachineIdentifier(dataRepresentation: data) else {
             throw VMError.invalidMachineIdentifier
         }

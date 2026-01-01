@@ -19,4 +19,14 @@ final class VMPathsTests: XCTestCase {
         XCTAssertEqual(paths.settingsURL.lastPathComponent, "Settings.json")
         XCTAssertEqual(paths.ipswDirectoryURL.lastPathComponent, "IPSWs")
     }
+
+    func testCheckpointPaths() {
+        let paths = VMPaths(root: URL(fileURLWithPath: "/tmp/Computex/VMs"))
+        let bundle = paths.checkpointBundleURL(sessionID: "primary", checkpointID: "chk-1")
+        XCTAssertEqual(bundle.lastPathComponent, "chk-1")
+        XCTAssertEqual(bundle.deletingLastPathComponent().lastPathComponent, "Checkpoints")
+        XCTAssertEqual(paths.checkpointDiskImageURL(sessionID: "primary", checkpointID: "chk-1").lastPathComponent, "Disk.img")
+        XCTAssertEqual(paths.checkpointStateURL(sessionID: "primary", checkpointID: "chk-1").lastPathComponent, "State.vzsave")
+        XCTAssertEqual(paths.checkpointMetadataURL(sessionID: "primary", checkpointID: "chk-1").lastPathComponent, "Checkpoint.json")
+    }
 }

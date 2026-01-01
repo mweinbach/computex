@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Darwin
 import Foundation
@@ -44,6 +45,10 @@ final class VMManager {
         baseArtifacts().exists()
     }
 
+    func sessionArtifacts(id: String) -> VMArtifacts {
+        VMArtifacts(bundleURL: paths.sessionBundleURL(id: id))
+    }
+
     func downloadLatestRestoreImage(progress: @escaping (Double) -> Void) async throws {
         try paths.ensureDirectories()
         AppLog.info("Ensured VM directories at \(paths.root.path).")
@@ -63,7 +68,7 @@ final class VMManager {
         try await installer.installBase(restoreImageURL: restoreImageURL, artifacts: base, diskSizeGB: UInt64(sizing.diskSizeGB), progress: progress)
     }
 
-    func startBaseSetup() async throws -> VMInstance {
+    func buildBaseSetupInstance() async throws -> VMInstance {
         try paths.ensureDirectories()
         let base = baseArtifacts()
         guard base.exists() else {
@@ -71,9 +76,7 @@ final class VMManager {
             throw VMError.baseNotReady
         }
         AppLog.info("Starting base setup VM.")
-        let instance = try await buildInstance(sessionID: "base-setup", artifacts: base, mode: .baseSetup)
-        try await instance.start()
-        return instance
+        return try await buildInstance(sessionID: "base-setup", artifacts: base, mode: .baseSetup)
     }
 
     func loadSessionSummaries() async -> [VMSessionSummary] {
@@ -107,7 +110,7 @@ final class VMManager {
         return summaries
     }
 
-    func startSession(
+    func prepareSessionInstance(
         kind: SessionKind,
         log: @escaping (String) -> Void,
         progress: @escaping (String) -> Void
@@ -140,7 +143,6 @@ final class VMManager {
             log("Booting base VM for first-time setup.")
             let instance = try await buildInstance(sessionID: "base-setup", artifacts: baseArtifacts, mode: .baseSetup)
             progress("Starting base VM")
-            try await instance.start()
             return instance
         }
 
@@ -149,8 +151,40 @@ final class VMManager {
 
         progress("Starting VM")
         log("Starting VM session: \(session.id)")
+        return instance
+    }
+
+    func startSessionByID(_ sessionID: String, kind: SessionKind) async throws -> VMInstance {
+        let instance = try await buildSessionInstance(sessionID, kind: kind)
         try await instance.start()
         return instance
+    }
+
+    func buildSessionInstance(_ sessionID: String, kind: SessionKind) async throws -> VMInstance {
+        try paths.ensureDirectories()
+        let baseArtifacts = VMArtifacts(bundleURL: paths.baseBundleURL)
+        guard baseArtifacts.exists() else {
+            throw VMError.baseNotReady
+        }
+
+        let sessionArtifacts = try ensureSessionArtifacts(sessionID: sessionID, kind: kind, baseArtifacts: baseArtifacts)
+        return try await buildInstance(sessionID: sessionID, artifacts: sessionArtifacts, mode: .session(kind))
+    }
+
+    private func ensureSessionArtifacts(
+        sessionID: String,
+        kind: SessionKind,
+        baseArtifacts: VMArtifacts
+    ) throws -> VMArtifacts {
+        let sessionArtifacts = VMArtifacts(bundleURL: paths.sessionBundleURL(id: sessionID))
+        if sessionArtifacts.exists() {
+            return sessionArtifacts
+        }
+        if kind == .primary {
+            _ = try prepareSession(kind: .primary, baseArtifacts: baseArtifacts) { _ in }
+            return VMArtifacts(bundleURL: paths.sessionBundleURL(id: sessionID))
+        }
+        throw VMError.sessionNotFound(sessionID)
     }
 
     private func prepareSession(
@@ -173,32 +207,29 @@ final class VMManager {
         }
 
         log("Creating session bundle: \(sessionID)")
-        try FileManager.default.createDirectory(at: sessionArtifacts.bundleURL, withIntermediateDirectories: true)
-        try cloneDiskImage(from: baseArtifacts.diskImageURL, to: sessionArtifacts.diskImageURL)
-
-        let hardwareModel = try VMConfigurationBuilder.loadHardwareModel(from: baseArtifacts.hardwareModelURL)
-        let machineIdentifier = VZMacMachineIdentifier()
-        _ = try VZMacAuxiliaryStorage(
-            creatingStorageAt: sessionArtifacts.auxiliaryStorageURL,
-            hardwareModel: hardwareModel,
-            options: []
+        let summary = try createSessionBundle(
+            sessionID: sessionID,
+            name: kind == .primary ? "Primary" : sessionID,
+            kind: kind,
+            sourceArtifacts: baseArtifacts,
+            overwrite: false
         )
-
-        try VMConfigurationBuilder.writeHardwareModel(hardwareModel, to: sessionArtifacts.hardwareModelURL)
-        try VMConfigurationBuilder.writeMachineIdentifier(machineIdentifier, to: sessionArtifacts.machineIdentifierURL)
-
-        let name = kind == .primary ? "Primary" : sessionID
-        let summary = VMSessionSummary(id: sessionID, name: name, kind: kind)
-        try writeSessionMetadata(summary, to: sessionArtifacts.metadataURL)
-        return (sessionID, sessionArtifacts)
+        return (summary.id, VMArtifacts(bundleURL: paths.sessionBundleURL(id: summary.id)))
     }
 
     private func buildInstance(sessionID: String, artifacts: VMArtifacts, mode: VMRunMode) async throws -> VMInstance {
         AppLog.info("Building VM instance '\(sessionID)' with \(sizing.cpuCount) CPUs, \(sizing.memorySize / 1024 / 1024 / 1024)GB RAM.")
+        let preflight = RuntimeDiagnostics.virtualizationPreflight()
+        RuntimeDiagnostics.logVirtualizationPreflight(preflight, context: "buildInstance")
+        if !preflight.missingEntitlements.isEmpty {
+            throw VMError.missingEntitlement(preflight.missingEntitlements.joined(separator: ", "))
+        }
         try assertArtifactsExist(artifacts)
+        logArtifactDetails(artifacts)
 
         let hardwareModel = try VMConfigurationBuilder.loadHardwareModel(from: artifacts.hardwareModelURL)
         let machineIdentifier = try VMConfigurationBuilder.loadMachineIdentifier(from: artifacts.machineIdentifierURL)
+        AppLog.info("Hardware model supported: \(hardwareModel.isSupported)")
         AppLog.info("Loading auxiliary storage from \(artifacts.auxiliaryStorageURL.path).")
         let auxiliaryStorage = VZMacAuxiliaryStorage(contentsOf: artifacts.auxiliaryStorageURL)
 
@@ -210,6 +241,7 @@ final class VMManager {
             machineIdentifier: machineIdentifier,
             auxiliaryStorage: auxiliaryStorage
         )
+        AppLog.info("Configuration validated. Boot loader: \(type(of: configuration.bootLoader))")
         AppLog.info("Instantiating VZVirtualMachine.")
         let virtualMachine = VZVirtualMachine(configuration: configuration)
         return VMInstance(id: sessionID, virtualMachine: virtualMachine, mode: mode)
@@ -232,11 +264,136 @@ final class VMManager {
         }
     }
 
-    private func cloneDiskImage(from sourceURL: URL, to destinationURL: URL) throws {
+    private func logArtifactDetails(_ artifacts: VMArtifacts) {
+        logFileInfo(label: "Disk image", url: artifacts.diskImageURL)
+        logFileInfo(label: "Auxiliary storage", url: artifacts.auxiliaryStorageURL)
+        logFileInfo(label: "Hardware model", url: artifacts.hardwareModelURL)
+        logFileInfo(label: "Machine identifier", url: artifacts.machineIdentifierURL)
+    }
+
+    private func logFileInfo(label: String, url: URL) {
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: url.path) else {
+            AppLog.error("\(label) missing at \(url.path).")
+            return
+        }
+        do {
+            let attributes = try fileManager.attributesOfItem(atPath: url.path)
+            if let size = attributes[.size] as? NSNumber {
+                AppLog.info("\(label) size: \(size.intValue) bytes (\(formatBytes(size.uint64Value)))")
+            } else {
+                AppLog.info("\(label) size: unknown (\(url.path))")
+            }
+        } catch {
+            AppLog.error("Failed to read \(label) attributes: \(error.localizedDescription)")
+        }
+    }
+
+    private func formatBytes(_ bytes: UInt64) -> String {
+        let gb = Double(bytes) / 1024.0 / 1024.0 / 1024.0
+        if gb >= 1 {
+            return String(format: "%.2fGB", gb)
+        }
+        let mb = Double(bytes) / 1024.0 / 1024.0
+        return String(format: "%.2fMB", mb)
+    }
+
+    func cloneDiskImage(from sourceURL: URL, to destinationURL: URL) throws {
         let result = copyfile(sourceURL.path, destinationURL.path, nil, copyfile_flags_t(COPYFILE_CLONE))
         if result != 0 {
             throw VMError.invalidDiskImage
         }
+    }
+
+    private func cloneFile(from sourceURL: URL, to destinationURL: URL, label: String) throws {
+        if FileManager.default.fileExists(atPath: destinationURL.path) {
+            try FileManager.default.removeItem(at: destinationURL)
+        }
+        let result = copyfile(sourceURL.path, destinationURL.path, nil, copyfile_flags_t(COPYFILE_CLONE))
+        if result != 0 {
+            throw VMError.copyFailed(label)
+        }
+    }
+
+    func createPrimaryFromBase() throws {
+        let base = baseArtifacts()
+        guard base.exists() else {
+            throw VMError.baseNotReady
+        }
+        _ = try createSessionBundle(
+            sessionID: "primary",
+            name: "Primary",
+            kind: .primary,
+            sourceArtifacts: base,
+            overwrite: true
+        )
+    }
+
+    func cloneSession(name: String, source: SessionCloneSource, selectedSessionID: String?) throws -> VMSessionSummary {
+        try paths.ensureDirectories()
+
+        let sourceArtifacts: VMArtifacts
+        switch source {
+        case .base:
+            let base = baseArtifacts()
+            guard base.exists() else {
+                throw VMError.baseNotReady
+            }
+            sourceArtifacts = base
+        case .primary:
+            let primary = sessionArtifacts(id: "primary")
+            guard primary.exists() else {
+                throw VMError.sessionNotFound("primary")
+            }
+            sourceArtifacts = primary
+        case .selected:
+            guard let selectedSessionID else {
+                throw VMError.sessionNotFound("selected")
+            }
+            let selected = sessionArtifacts(id: selectedSessionID)
+            guard selected.exists() else {
+                throw VMError.sessionNotFound(selectedSessionID)
+            }
+            sourceArtifacts = selected
+        }
+
+        let sessionID = "session-\(UUID().uuidString.lowercased())"
+        return try createSessionBundle(
+            sessionID: sessionID,
+            name: name,
+            kind: .disposable,
+            sourceArtifacts: sourceArtifacts,
+            overwrite: false
+        )
+    }
+
+    @discardableResult
+    private func createSessionBundle(
+        sessionID: String,
+        name: String,
+        kind: SessionKind,
+        sourceArtifacts: VMArtifacts,
+        overwrite: Bool
+    ) throws -> VMSessionSummary {
+        let sessionArtifacts = VMArtifacts(bundleURL: paths.sessionBundleURL(id: sessionID))
+        if sessionArtifacts.exists() {
+            if overwrite {
+                try FileManager.default.removeItem(at: sessionArtifacts.bundleURL)
+            } else {
+                let summary = VMSessionSummary(id: sessionID, name: name, kind: kind)
+                return summary
+            }
+        }
+
+        try FileManager.default.createDirectory(at: sessionArtifacts.bundleURL, withIntermediateDirectories: true)
+        try cloneDiskImage(from: sourceArtifacts.diskImageURL, to: sessionArtifacts.diskImageURL)
+        try cloneFile(from: sourceArtifacts.auxiliaryStorageURL, to: sessionArtifacts.auxiliaryStorageURL, label: "auxiliary storage")
+        try cloneFile(from: sourceArtifacts.hardwareModelURL, to: sessionArtifacts.hardwareModelURL, label: "hardware model")
+        try cloneFile(from: sourceArtifacts.machineIdentifierURL, to: sessionArtifacts.machineIdentifierURL, label: "machine identifier")
+
+        let summary = VMSessionSummary(id: sessionID, name: name, kind: kind)
+        try writeSessionMetadata(summary, to: sessionArtifacts.metadataURL)
+        return summary
     }
 
     private func writeSessionMetadata(_ summary: VMSessionSummary, to url: URL) throws {
@@ -260,6 +417,57 @@ final class VMManager {
         }
     }
 
+    func loadCheckpoints(sessionID: String) -> [VMCheckpoint] {
+        let directory = paths.checkpointsDirectoryURL(sessionID: sessionID)
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: directory.path),
+              let contents = try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else {
+            return []
+        }
+
+        var checkpoints: [VMCheckpoint] = []
+        for url in contents {
+            let metadataURL = url.appendingPathComponent("Checkpoint.json")
+            guard let data = try? Data(contentsOf: metadataURL),
+                  let checkpoint = try? JSONDecoder().decode(VMCheckpoint.self, from: data) else {
+                continue
+            }
+            checkpoints.append(checkpoint)
+        }
+
+        return checkpoints.sorted { $0.createdAt > $1.createdAt }
+    }
+
+    func checkpointPaths(sessionID: String, checkpointID: String) -> (bundle: URL, disk: URL, state: URL, metadata: URL) {
+        (
+            bundle: paths.checkpointBundleURL(sessionID: sessionID, checkpointID: checkpointID),
+            disk: paths.checkpointDiskImageURL(sessionID: sessionID, checkpointID: checkpointID),
+            state: paths.checkpointStateURL(sessionID: sessionID, checkpointID: checkpointID),
+            metadata: paths.checkpointMetadataURL(sessionID: sessionID, checkpointID: checkpointID)
+        )
+    }
+
+    func writeCheckpointMetadata(_ checkpoint: VMCheckpoint) throws {
+        let metadataURL = paths.checkpointMetadataURL(sessionID: checkpoint.sessionID, checkpointID: checkpoint.id)
+        let data = try JSONEncoder().encode(checkpoint)
+        try data.write(to: metadataURL)
+    }
+
+    func deleteCheckpoint(sessionID: String, checkpointID: String) throws {
+        let url = paths.checkpointBundleURL(sessionID: sessionID, checkpointID: checkpointID)
+        if FileManager.default.fileExists(atPath: url.path) {
+            try FileManager.default.removeItem(at: url)
+        }
+    }
+
+    func openCheckpointsFolder(sessionID: String) {
+        let url = paths.checkpointsDirectoryURL(sessionID: sessionID)
+        if !FileManager.default.fileExists(atPath: url.path) {
+            try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        }
+        NSWorkspace.shared.open(url)
+    }
+
     func deleteBase() throws {
         let base = baseArtifacts()
         if base.exists() {
@@ -274,6 +482,7 @@ final class VMManager {
                 case .success:
                     continuation.resume(returning: .success(()))
                 case .failure(let error):
+                    AppLog.error("Restore image catalog refresh failed: \(error.localizedDescription) (\(ErrorDiagnostics.describe(error)))")
                     continuation.resume(returning: .failure(error))
                 }
             }

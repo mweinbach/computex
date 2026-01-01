@@ -13,6 +13,10 @@ enum VMError: LocalizedError {
     case stopFailed(String)
     case baseNotReady
     case missingArtifact(String)
+    case missingEntitlement(String)
+    case sessionNotFound(String)
+    case checkpointNotFound(String)
+    case copyFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -40,6 +44,14 @@ enum VMError: LocalizedError {
             return "Base VM is not ready"
         case .missingArtifact(let message):
             return "Missing VM artifact: \(message)"
+        case .missingEntitlement(let message):
+            return "Missing required entitlement: \(message)"
+        case .sessionNotFound(let message):
+            return "Session not found: \(message)"
+        case .checkpointNotFound(let message):
+            return "Checkpoint not found: \(message)"
+        case .copyFailed(let message):
+            return "Failed to copy VM artifact: \(message)"
         }
     }
 }

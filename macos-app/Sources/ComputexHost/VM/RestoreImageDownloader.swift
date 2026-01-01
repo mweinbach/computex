@@ -27,7 +27,7 @@ final class RestoreImageDownloader: NSObject, URLSessionDownloadDelegate, URLSes
                     AppLog.info("Fetched latest supported restore image.")
                     continuation.resume(returning: image)
                 case .failure(let error):
-                    AppLog.error("Failed to fetch restore image: \(error.localizedDescription)")
+                    AppLog.error("Failed to fetch restore image: \(error.localizedDescription) (\(ErrorDiagnostics.describe(error)))")
                     continuation.resume(throwing: VMError.restoreImageDownloadFailed(error.localizedDescription))
                 }
             }
@@ -93,7 +93,7 @@ final class RestoreImageDownloader: NSObject, URLSessionDownloadDelegate, URLSes
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         if let error {
-            AppLog.error("Restore image download failed: \(error.localizedDescription)")
+            AppLog.error("Restore image download failed: \(error.localizedDescription) (\(ErrorDiagnostics.describe(error)))")
             finish(.failure(VMError.restoreImageDownloadFailed(error.localizedDescription)))
         }
     }

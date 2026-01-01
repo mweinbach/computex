@@ -7,6 +7,9 @@ import Virtualization
 final class AppModel: ObservableObject {
     @Published var sessions: [VMSessionSummary] = []
     @Published var selectedSessionID: String?
+    @Published var activeSessionID: String?
+    @Published var checkpoints: [VMCheckpoint] = []
+    @Published var selectedCheckpointID: String?
     @Published var status: AppStatus = .idle
     @Published var statusDetail: String?
     @Published var logLines: [String] = []
@@ -22,8 +25,10 @@ final class AppModel: ObservableObject {
     @Published var hasLatestRestoreImage = false
     @Published var storedIPSWs: [StoredIPSW] = []
     @Published var preferences: VMPrefs = VMPrefs.default()
+    @Published var credentials: VMCredentials = VMCredentials.default()
     @Published var catalogCache = CatalogCache(lastUpdated: nil, lastError: nil, latestLabel: nil)
     @Published var isRefreshingCatalog = false
+    @Published var isSavingCheckpoint = false
 
     private let manager = VMManager()
     private lazy var settingsStore = SettingsStore(url: manager.settingsURL())
@@ -43,6 +48,7 @@ final class AppModel: ObservableObject {
 
         sessions = await manager.loadSessionSummaries()
         selectedSessionID = sessions.first?.id
+        refreshCheckpoints()
 
         refreshBaseStatus()
         syncLatestRestoreImageEntry()
@@ -58,25 +64,289 @@ final class AppModel: ObservableObject {
     }
 
     func stopSession() async {
-        guard let instance = activeInstance else { return }
-        status = .stopping
-        statusDetail = nil
+        await stopActiveInstance(deleteDisposable: true)
+    }
+
+    func selectSession(id: String) {
+        selectedSessionID = id
+        refreshCheckpoints()
+    }
+
+    func refreshCheckpoints() {
+        guard let sessionID = selectedSessionID else {
+            checkpoints = []
+            selectedCheckpointID = nil
+            return
+        }
+        checkpoints = manager.loadCheckpoints(sessionID: sessionID)
+        if let first = checkpoints.first {
+            selectedCheckpointID = first.id
+        } else {
+            selectedCheckpointID = nil
+        }
+    }
+
+    func startSelectedSession() async {
+        guard let sessionID = selectedSessionID,
+              let summary = sessions.first(where: { $0.id == sessionID }) else {
+            log("Select a session first.")
+            return
+        }
+        guard baseReady else {
+            log("Base VM is not ready.")
+            return
+        }
+        status = .starting
+        statusDetail = "Starting \(summary.name)"
         do {
-            let mode = instance.mode
-            try await instance.stop()
-            if case .session(.disposable) = mode {
-                try? manager.deleteSession(id: instance.id)
-                sessions = await manager.loadSessionSummaries()
-            }
-            activeInstance = nil
-            virtualMachine = nil
+            let instance = try await manager.buildSessionInstance(sessionID, kind: summary.kind)
+            activeInstance = instance
+            virtualMachine = instance.virtualMachine
+            activeSessionID = instance.id
             needsBaseSetup = false
-            status = .stopped
+            try await instance.start()
+            status = .running
+            statusDetail = nil
         } catch {
             status = .error
             statusDetail = error.localizedDescription
-            log("Failed to stop VM: \(error.localizedDescription)")
+            log("Failed to start session: \(error.localizedDescription)")
         }
+    }
+
+    func saveCheckpoint(name: String) async {
+        guard let instance = activeInstance else {
+            log("No running VM to checkpoint.")
+            return
+        }
+        guard case .session = instance.mode else {
+            log("Checkpoints are only available for session VMs.")
+            return
+        }
+
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let checkpointName = trimmedName.isEmpty ? defaultCheckpointName() : trimmedName
+        let sessionID = instance.id
+        let checkpointID = UUID().uuidString.lowercased()
+        let checkpoint = VMCheckpoint(
+            id: checkpointID,
+            sessionID: sessionID,
+            name: checkpointName,
+            createdAt: Date(),
+            hasState: true
+        )
+        let paths = manager.checkpointPaths(sessionID: sessionID, checkpointID: checkpointID)
+
+        selectedSessionID = sessionID
+        isSavingCheckpoint = true
+        status = .preparing
+        statusDetail = "Saving checkpoint"
+        log("Saving checkpoint '\(checkpointName)' for session \(sessionID).")
+
+        var didPause = false
+        do {
+            try FileManager.default.createDirectory(at: paths.bundle, withIntermediateDirectories: true)
+            try await instance.pause()
+            didPause = true
+            try await instance.saveState(to: paths.state)
+
+            let artifacts = manager.sessionArtifacts(id: sessionID)
+            try manager.cloneDiskImage(from: artifacts.diskImageURL, to: paths.disk)
+            try manager.writeCheckpointMetadata(checkpoint)
+
+            try await instance.resume()
+            didPause = false
+
+            status = .running
+            statusDetail = nil
+            isSavingCheckpoint = false
+            refreshCheckpoints()
+            log("Checkpoint saved: \(checkpointName)")
+        } catch {
+            if didPause {
+                try? await instance.resume()
+            }
+            status = .error
+            statusDetail = error.localizedDescription
+            isSavingCheckpoint = false
+            log("Failed to save checkpoint: \(error.localizedDescription)")
+        }
+    }
+
+    func saveDiskCheckpoint(name: String) async {
+        guard let sessionID = selectedSessionID else {
+            log("Select a session first.")
+            return
+        }
+        if activeSessionID == sessionID {
+            log("Stop the VM or use Save Checkpoint for a running session.")
+            return
+        }
+
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let checkpointName = trimmedName.isEmpty ? defaultCheckpointName() : trimmedName
+        let checkpointID = UUID().uuidString.lowercased()
+        let checkpoint = VMCheckpoint(
+            id: checkpointID,
+            sessionID: sessionID,
+            name: checkpointName,
+            createdAt: Date(),
+            hasState: false
+        )
+        let paths = manager.checkpointPaths(sessionID: sessionID, checkpointID: checkpointID)
+        let artifacts = manager.sessionArtifacts(id: sessionID)
+        if !artifacts.exists() {
+            log("Session artifacts missing for \(sessionID).")
+            return
+        }
+
+        status = .preparing
+        statusDetail = "Saving disk checkpoint"
+        log("Saving disk-only checkpoint '\(checkpointName)' for session \(sessionID).")
+        do {
+            try FileManager.default.createDirectory(at: paths.bundle, withIntermediateDirectories: true)
+            try manager.cloneDiskImage(from: artifacts.diskImageURL, to: paths.disk)
+            try manager.writeCheckpointMetadata(checkpoint)
+            status = .idle
+            statusDetail = nil
+            refreshCheckpoints()
+            log("Disk checkpoint saved: \(checkpointName)")
+        } catch {
+            status = .error
+            statusDetail = error.localizedDescription
+            log("Failed to save disk checkpoint: \(error.localizedDescription)")
+        }
+    }
+
+    func restoreCheckpoint(id: String) async {
+        guard let checkpoint = checkpoints.first(where: { $0.id == id }) else {
+            log("Checkpoint not found.")
+            return
+        }
+        guard let summary = sessions.first(where: { $0.id == checkpoint.sessionID }) else {
+            log("Session not found for checkpoint.")
+            return
+        }
+
+        status = .starting
+        statusDetail = "Restoring checkpoint"
+        log("Restoring checkpoint '\(checkpoint.name)'.")
+
+        do {
+            if activeInstance != nil {
+                await stopActiveInstance(deleteDisposable: false)
+            }
+
+            let artifacts = manager.sessionArtifacts(id: checkpoint.sessionID)
+            let paths = manager.checkpointPaths(sessionID: checkpoint.sessionID, checkpointID: checkpoint.id)
+
+            if !FileManager.default.fileExists(atPath: paths.disk.path) ||
+                !FileManager.default.fileExists(atPath: paths.state.path) {
+                throw VMError.checkpointNotFound(checkpoint.id)
+            }
+
+            try manager.cloneDiskImage(from: paths.disk, to: artifacts.diskImageURL)
+            let instance = try await manager.buildSessionInstance(checkpoint.sessionID, kind: summary.kind)
+
+            activeInstance = instance
+            virtualMachine = instance.virtualMachine
+            activeSessionID = instance.id
+            selectedSessionID = checkpoint.sessionID
+
+            if checkpoint.hasState && FileManager.default.fileExists(atPath: paths.state.path) {
+                try await instance.restoreState(from: paths.state)
+                try await instance.resume()
+            } else {
+                try await instance.start()
+            }
+
+            status = .running
+            statusDetail = nil
+            refreshCheckpoints()
+            log("Checkpoint restored: \(checkpoint.name)")
+        } catch {
+            status = .error
+            statusDetail = error.localizedDescription
+            log("Failed to restore checkpoint: \(error.localizedDescription)")
+        }
+    }
+
+    func deleteCheckpoint(id: String) {
+        guard let checkpoint = checkpoints.first(where: { $0.id == id }) else { return }
+        do {
+            try manager.deleteCheckpoint(sessionID: checkpoint.sessionID, checkpointID: checkpoint.id)
+            refreshCheckpoints()
+            log("Deleted checkpoint: \(checkpoint.name)")
+        } catch {
+            reportError(error)
+        }
+    }
+
+    func deleteSession(id: String) async {
+        if activeSessionID == id {
+            log("Stop the running VM before deleting its session.")
+            return
+        }
+        do {
+            try manager.deleteSession(id: id)
+            sessions = await manager.loadSessionSummaries()
+            if selectedSessionID == id {
+                selectedSessionID = sessions.first?.id
+            }
+            refreshCheckpoints()
+            log("Deleted session: \(id)")
+        } catch {
+            reportError(error)
+        }
+    }
+
+    func createPrimaryFromBase() async {
+        if activeSessionID == "primary" {
+            log("Stop the running primary VM before resetting it.")
+            return
+        }
+        guard baseReady else {
+            log("Base VM is not ready.")
+            return
+        }
+        do {
+            try manager.deleteSession(id: "primary")
+        } catch {
+            log("Failed to delete primary: \(error.localizedDescription)")
+        }
+
+        do {
+            try manager.createPrimaryFromBase()
+            sessions = await manager.loadSessionSummaries()
+            selectedSessionID = "primary"
+            refreshCheckpoints()
+            log("Primary session recreated from base.")
+        } catch {
+            reportError(error)
+        }
+    }
+
+    func cloneSession(name: String, source: SessionCloneSource) async {
+        do {
+            if source == .base && !baseReady {
+                log("Base VM is not ready.")
+                return
+            }
+            let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let finalName = trimmedName.isEmpty ? defaultSessionName(source: source) : trimmedName
+            let summary = try manager.cloneSession(name: finalName, source: source, selectedSessionID: selectedSessionID)
+            sessions = await manager.loadSessionSummaries()
+            selectedSessionID = summary.id
+            refreshCheckpoints()
+            log("Session cloned: \(summary.name)")
+        } catch {
+            reportError(error)
+        }
+    }
+
+    func openCheckpointsFolder() {
+        guard let sessionID = selectedSessionID else { return }
+        manager.openCheckpointsFolder(sessionID: sessionID)
     }
 
     func downloadLatestRestoreImage() async {
@@ -195,10 +465,12 @@ final class AppModel: ObservableObject {
         statusDetail = "Starting base VM for setup"
         log("Starting base VM for setup.")
         do {
-            let instance = try await manager.startBaseSetup()
+            let instance = try await manager.buildBaseSetupInstance()
             activeInstance = instance
             virtualMachine = instance.virtualMachine
+            activeSessionID = nil
             needsBaseSetup = true
+            try await instance.start()
             status = .running
             statusDetail = nil
         } catch {
@@ -232,7 +504,7 @@ final class AppModel: ObservableObject {
             log("Restore image catalog refreshed.")
         case .failure(let error):
             catalogCache.lastError = error.localizedDescription
-            log("Restore image catalog refresh failed: \(error.localizedDescription)")
+            log("Restore image catalog refresh failed: \(error.localizedDescription) (\(ErrorDiagnostics.describe(error)))")
         }
         settings.catalog = catalogCache
         persistSettings()
@@ -259,6 +531,21 @@ final class AppModel: ObservableObject {
         persistSettings()
     }
 
+    func updateCredentials(username: String? = nil, password: String? = nil) {
+        var updated = credentials
+        if let username {
+            updated.username = username
+            log("Updated VM username.")
+        }
+        if let password {
+            updated.password = password
+            log("Updated VM password.")
+        }
+        credentials = updated
+        settings.credentials = updated
+        persistSettings()
+    }
+
     func openIPSWFolder() {
         NSWorkspace.shared.open(manager.ipswDirectoryURL())
     }
@@ -269,7 +556,7 @@ final class AppModel: ObservableObject {
         log("Preparing \(kind.label) session")
 
         do {
-            let instance = try await manager.startSession(kind: kind) { [weak self] message in
+            let instance = try await manager.prepareSessionInstance(kind: kind) { [weak self] message in
                 Task { @MainActor in
                     self?.log(message)
                 }
@@ -291,8 +578,13 @@ final class AppModel: ObservableObject {
             activeInstance = instance
             virtualMachine = instance.virtualMachine
             needsBaseSetup = instance.mode == .baseSetup
+            activeSessionID = instance.id
+            try await instance.start()
             status = .running
             statusDetail = nil
+            sessions = await manager.loadSessionSummaries()
+            selectedSessionID = instance.id
+            refreshCheckpoints()
         } catch {
             status = .error
             statusDetail = error.localizedDescription
@@ -307,6 +599,54 @@ final class AppModel: ObservableObject {
         logLines.append(line)
     }
 
+    private func stopActiveInstance(deleteDisposable: Bool) async {
+        guard let instance = activeInstance else { return }
+        status = .stopping
+        statusDetail = nil
+        do {
+            let mode = instance.mode
+            try await instance.stop()
+            if deleteDisposable, case .session(.disposable) = mode {
+                try? manager.deleteSession(id: instance.id)
+                sessions = await manager.loadSessionSummaries()
+                if selectedSessionID == instance.id {
+                    selectedSessionID = sessions.first?.id
+                }
+            }
+            activeInstance = nil
+            virtualMachine = nil
+            activeSessionID = nil
+            needsBaseSetup = false
+            status = .stopped
+            refreshCheckpoints()
+        } catch {
+            status = .error
+            statusDetail = error.localizedDescription
+            log("Failed to stop VM: \(error.localizedDescription)")
+        }
+    }
+
+    private func defaultCheckpointName() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d, h:mm a"
+        return "Checkpoint \(formatter.string(from: Date()))"
+    }
+
+    private func defaultSessionName(source: SessionCloneSource) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d, h:mm a"
+        let sourceLabel: String
+        switch source {
+        case .base:
+            sourceLabel = "Base"
+        case .primary:
+            sourceLabel = "Primary"
+        case .selected:
+            sourceLabel = "Session"
+        }
+        return "\(sourceLabel) Clone \(formatter.string(from: Date()))"
+    }
+
     private func refreshBaseStatus() {
         baseInstalled = manager.baseExists()
         baseReady = manager.isBaseReady(manager.baseArtifacts())
@@ -316,6 +656,7 @@ final class AppModel: ObservableObject {
     private func applySettings(_ settings: AppSettings) {
         storedIPSWs = settings.ipsws
         preferences = settings.preferences
+        credentials = settings.credentials
         catalogCache = settings.catalog
         manager.updateSizing(VMResourceSizing.fromPreferences(preferences))
 
@@ -330,6 +671,7 @@ final class AppModel: ObservableObject {
     private func persistSettings() {
         settings.ipsws = storedIPSWs
         settings.preferences = preferences
+        settings.credentials = credentials
         settings.catalog = catalogCache
         settingsStore.save(settings)
     }

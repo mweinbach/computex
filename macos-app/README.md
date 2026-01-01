@@ -48,6 +48,7 @@ For debugging with stdout logs, use:
 - The first boot is user-driven so macOS setup can complete.
 - After setup, click "Mark Base Ready" to cache the base VM. You can resume the primary session or clone a disposable VM per session.
 - Restore images and settings are persisted under `~/Library/Application Support/Computex/VMs/`.
+- Checkpoints (state + cloned disk) live under `~/Library/Application Support/Computex/VMs/Sessions/<id>.vm/Checkpoints/`.
 
 ## Notes
 

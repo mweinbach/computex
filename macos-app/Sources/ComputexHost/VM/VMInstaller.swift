@@ -19,6 +19,12 @@ final class VMInstaller {
         diskSizeGB: UInt64,
         progress: @escaping (Double) -> Void
     ) async throws {
+        let preflight = RuntimeDiagnostics.virtualizationPreflight()
+        RuntimeDiagnostics.logVirtualizationPreflight(preflight, context: "installBase")
+        if !preflight.missingEntitlements.isEmpty {
+            throw VMError.missingEntitlement(preflight.missingEntitlements.joined(separator: ", "))
+        }
+
         let restoreImage = try await loadRestoreImage(from: restoreImageURL)
         guard let requirements = restoreImage.mostFeaturefulSupportedConfiguration else {
             throw VMError.restoreImageUnsupported

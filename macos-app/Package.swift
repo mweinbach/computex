@@ -15,7 +15,8 @@ let package = Package(
             path: "Sources/ComputexHost",
             linkerSettings: [
                 .linkedFramework("Virtualization"),
-                .linkedFramework("AppKit")
+                .linkedFramework("AppKit"),
+                .linkedFramework("Security")
             ]
         ),
         .testTarget(
