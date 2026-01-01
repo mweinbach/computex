@@ -56,7 +56,7 @@ final class AppModel: ObservableObject {
     }
 
     func startPrimarySession() async {
-        await startSession(kind: .primary)
+        await startPrimarySession(resumeFromAutosave: true)
     }
 
     func startDisposableSession() async {
@@ -618,6 +618,49 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func startPrimarySession(resumeFromAutosave: Bool) async {
+        status = .preparing
+        statusDetail = nil
+        log("Preparing Primary session")
+
+        do {
+            let autosave = resumeFromAutosave ? primaryAutosaveCheckpoint() : nil
+            if let autosave {
+                let paths = manager.checkpointPaths(sessionID: autosave.checkpoint.sessionID, checkpointID: autosave.checkpoint.id)
+                guard FileManager.default.fileExists(atPath: paths.disk.path) else {
+                    throw VMError.checkpointNotFound(autosave.checkpoint.id)
+                }
+                let artifacts = manager.sessionArtifacts(id: autosave.checkpoint.sessionID)
+                log("Restoring primary disk from autosave checkpoint.")
+                try manager.cloneDiskImage(from: paths.disk, to: artifacts.diskImageURL)
+            }
+
+            let instance = try await manager.buildSessionInstance("primary", kind: .primary)
+            activeInstance = instance
+            virtualMachine = instance.virtualMachine
+            needsBaseSetup = false
+            activeSessionID = instance.id
+            sessions = await manager.loadSessionSummaries()
+            selectedSessionID = instance.id
+            refreshCheckpoints()
+
+            if let autosave {
+                log("Restoring primary from autosave checkpoint.")
+                try await instance.restoreState(from: autosave.stateURL)
+                try await instance.resume()
+            } else {
+                try await instance.start()
+            }
+
+            status = .running
+            statusDetail = nil
+        } catch {
+            status = .error
+            statusDetail = error.localizedDescription
+            log("Failed to start primary VM: \(error.localizedDescription)")
+        }
+    }
+
     private func log(_ message: String) {
         let timestamp = ISO8601DateFormatter().string(from: Date())
         let line = "[\(timestamp)] \(message)"
@@ -631,6 +674,9 @@ final class AppModel: ObservableObject {
         statusDetail = nil
         do {
             let mode = instance.mode
+            if case .session(.primary) = mode {
+                try await autosavePrimaryCheckpoint(instance)
+            }
             try await instance.stop()
             if deleteDisposable, case .session(.disposable) = mode {
                 if manager.hasCheckpoints(sessionID: instance.id) {
@@ -654,6 +700,50 @@ final class AppModel: ObservableObject {
             statusDetail = error.localizedDescription
             log("Failed to stop VM: \(error.localizedDescription)")
         }
+    }
+
+    private func autosavePrimaryCheckpoint(_ instance: VMInstance) async throws {
+        let sessionID = instance.id
+        let checkpointID = primaryAutosaveID
+        let checkpointName = "Primary Autosave"
+        let paths = manager.checkpointPaths(sessionID: sessionID, checkpointID: checkpointID)
+
+        if FileManager.default.fileExists(atPath: paths.bundle.path) {
+            try FileManager.default.removeItem(at: paths.bundle)
+        }
+
+        try FileManager.default.createDirectory(at: paths.bundle, withIntermediateDirectories: true)
+        log("Saving primary autosave checkpoint.")
+        try await instance.pause()
+        try await instance.saveState(to: paths.state)
+
+        let artifacts = manager.sessionArtifacts(id: sessionID)
+        try manager.cloneDiskImage(from: artifacts.diskImageURL, to: paths.disk)
+
+        let checkpoint = VMCheckpoint(
+            id: checkpointID,
+            sessionID: sessionID,
+            name: checkpointName,
+            createdAt: Date(),
+            hasState: true
+        )
+        try manager.writeCheckpointMetadata(checkpoint)
+    }
+
+    private func primaryAutosaveCheckpoint() -> (checkpoint: VMCheckpoint, stateURL: URL)? {
+        let checkpoints = manager.loadCheckpoints(sessionID: "primary")
+        guard let checkpoint = checkpoints.first(where: { $0.id == primaryAutosaveID && $0.hasState }) else {
+            return nil
+        }
+        let paths = manager.checkpointPaths(sessionID: checkpoint.sessionID, checkpointID: checkpoint.id)
+        guard FileManager.default.fileExists(atPath: paths.state.path) else {
+            return nil
+        }
+        return (checkpoint, paths.state)
+    }
+
+    private var primaryAutosaveID: String {
+        "primary-autosave"
     }
 
     private func defaultCheckpointName() -> String {
