@@ -74,7 +74,7 @@ struct ContentView: View {
                 Text("Clone Session")
                     .font(.headline)
                 Picker("Source", selection: $cloneSource) {
-                    ForEach(SessionCloneSource.allCases) { source in
+                    ForEach(availableCloneSources) { source in
                         Text(source.label).tag(source)
                     }
                 }
@@ -280,6 +280,11 @@ struct ContentView: View {
                         }
                         .disabled(model.selectedSessionID != session.id || !model.baseReady)
 
+                        Button("Save as Base") {
+                            Task { await model.saveBaseFromSession(sessionID: session.id) }
+                        }
+                        .disabled(!model.baseReady)
+
                         Button(role: .destructive) {
                             Task { await model.deleteSession(id: session.id) }
                         } label: {
@@ -307,6 +312,13 @@ struct ContentView: View {
 
                 Button("Recreate Primary") {
                     Task { await model.createPrimaryFromBase() }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(!model.baseReady)
+
+                Button("Save Primary to Base") {
+                    Task { await model.savePrimaryToBase() }
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
@@ -651,6 +663,13 @@ struct ContentView: View {
             .disabled(!model.baseReady)
 
             Button {
+                Task { await model.savePrimaryToBase() }
+            } label: {
+                Label("Save Primary to Base", systemImage: "square.and.arrow.down")
+            }
+            .disabled(!model.baseReady)
+
+            Button {
                 Task { await model.startSelectedSession() }
             } label: {
                 Label("Start Selected VM", systemImage: "play.circle")
@@ -672,6 +691,12 @@ struct ContentView: View {
             .disabled(!model.baseReady)
 
             if let sessionID = model.selectedSessionID {
+                Button {
+                    Task { await model.saveSelectedToBase() }
+                } label: {
+                    Label("Save Selected to Base", systemImage: "square.and.arrow.down")
+                }
+
                 Button(role: .destructive) {
                     Task { await model.deleteSession(id: sessionID) }
                 } label: {
@@ -745,6 +770,13 @@ struct ContentView: View {
             get: { model.preferences.diskGB },
             set: { model.updatePreferences(diskGB: $0) }
         )
+    }
+
+    private var availableCloneSources: [SessionCloneSource] {
+        if model.selectedSessionID == nil {
+            return [.base, .primary]
+        }
+        return SessionCloneSource.allCases
     }
 }
 

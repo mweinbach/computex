@@ -326,6 +326,32 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func saveBaseFromSession(sessionID: String) async {
+        if activeSessionID == sessionID {
+            log("Stopping session \(sessionID) before updating base.")
+            await stopActiveInstance(deleteDisposable: false)
+        }
+        do {
+            try manager.updateBaseFromSession(sessionID: sessionID)
+            refreshBaseStatus()
+            log("Base VM updated from session \(sessionID).")
+        } catch {
+            reportError(error)
+        }
+    }
+
+    func savePrimaryToBase() async {
+        await saveBaseFromSession(sessionID: "primary")
+    }
+
+    func saveSelectedToBase() async {
+        guard let sessionID = selectedSessionID else {
+            log("Select a session first.")
+            return
+        }
+        await saveBaseFromSession(sessionID: sessionID)
+    }
+
     func cloneSession(name: String, source: SessionCloneSource) async {
         do {
             if source == .base && !baseReady {
@@ -607,10 +633,14 @@ final class AppModel: ObservableObject {
             let mode = instance.mode
             try await instance.stop()
             if deleteDisposable, case .session(.disposable) = mode {
-                try? manager.deleteSession(id: instance.id)
-                sessions = await manager.loadSessionSummaries()
-                if selectedSessionID == instance.id {
-                    selectedSessionID = sessions.first?.id
+                if manager.hasCheckpoints(sessionID: instance.id) {
+                    log("Keeping session \(instance.id) because it has checkpoints.")
+                } else {
+                    try? manager.deleteSession(id: instance.id)
+                    sessions = await manager.loadSessionSummaries()
+                    if selectedSessionID == instance.id {
+                        selectedSessionID = sessions.first?.id
+                    }
                 }
             }
             activeInstance = nil

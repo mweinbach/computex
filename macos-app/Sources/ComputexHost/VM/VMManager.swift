@@ -438,6 +438,10 @@ final class VMManager {
         return checkpoints.sorted { $0.createdAt > $1.createdAt }
     }
 
+    func hasCheckpoints(sessionID: String) -> Bool {
+        !loadCheckpoints(sessionID: sessionID).isEmpty
+    }
+
     func checkpointPaths(sessionID: String, checkpointID: String) -> (bundle: URL, disk: URL, state: URL, metadata: URL) {
         (
             bundle: paths.checkpointBundleURL(sessionID: sessionID, checkpointID: checkpointID),
@@ -473,6 +477,27 @@ final class VMManager {
         if base.exists() {
             try FileManager.default.removeItem(at: base.bundleURL)
         }
+    }
+
+    func updateBaseFromSession(sessionID: String) throws {
+        try paths.ensureDirectories()
+        let source = sessionArtifacts(id: sessionID)
+        guard source.exists() else {
+            throw VMError.sessionNotFound(sessionID)
+        }
+
+        let base = baseArtifacts()
+        if base.exists() {
+            try FileManager.default.removeItem(at: base.bundleURL)
+        }
+        try FileManager.default.createDirectory(at: base.bundleURL, withIntermediateDirectories: true)
+
+        try cloneDiskImage(from: source.diskImageURL, to: base.diskImageURL)
+        try cloneFile(from: source.auxiliaryStorageURL, to: base.auxiliaryStorageURL, label: "auxiliary storage")
+        try cloneFile(from: source.hardwareModelURL, to: base.hardwareModelURL, label: "hardware model")
+        try cloneFile(from: source.machineIdentifierURL, to: base.machineIdentifierURL, label: "machine identifier")
+
+        FileManager.default.createFile(atPath: base.baseReadyURL.path, contents: Data("ready".utf8))
     }
 
     func refreshRestoreImageCatalog() async -> Result<Void, Error> {
