@@ -299,10 +299,22 @@ final class VMManager {
     }
 
     func cloneDiskImage(from sourceURL: URL, to destinationURL: URL) throws {
-        let result = copyfile(sourceURL.path, destinationURL.path, nil, copyfile_flags_t(COPYFILE_CLONE))
-        if result != 0 {
-            throw VMError.invalidDiskImage
+        let fileManager = FileManager.default
+        if fileManager.fileExists(atPath: destinationURL.path) {
+            try fileManager.removeItem(at: destinationURL)
         }
+        var result = copyfile(sourceURL.path, destinationURL.path, nil, copyfile_flags_t(COPYFILE_CLONE))
+        if result != 0 {
+            let cloneErrno = errno
+            AppLog.error("copyfile(COPYFILE_CLONE) failed: \(String(cString: strerror(cloneErrno))) (\(cloneErrno)). Falling back to COPYFILE_DATA.")
+            result = copyfile(sourceURL.path, destinationURL.path, nil, copyfile_flags_t(COPYFILE_DATA))
+            if result != 0 {
+                let dataErrno = errno
+                AppLog.error("copyfile(COPYFILE_DATA) failed: \(String(cString: strerror(dataErrno))) (\(dataErrno)).")
+                throw VMError.copyFailed("disk image")
+            }
+        }
+        logFileInfo(label: "Cloned disk image", url: destinationURL)
     }
 
     private func cloneFile(from sourceURL: URL, to destinationURL: URL, label: String) throws {
